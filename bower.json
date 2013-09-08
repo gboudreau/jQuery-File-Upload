@@ -51,5 +51,17 @@
         "blueimp-tmpl": ">=2.3.0",
         "blueimp-load-image": ">=1.9.1",
         "blueimp-canvas-to-blob": ">=2.0.7"
-    }
+    },
+    "main": [
+        "js/vendor/jquery.ui.widget.js",
+        "js/jquery.fileupload-angular.js",
+        "js/jquery.fileupload-audio.js",
+        "js/jquery.fileupload-image.js",
+        "js/jquery.fileupload-process.js",
+        "js/jquery.fileupload-ui.js",
+        "js/jquery.fileupload-validate.js",
+        "js/jquery.fileupload-video.js",
+        "js/jquery.fileupload.js",
+        "js/jquery.iframe-transport.js"
+    ]
 }

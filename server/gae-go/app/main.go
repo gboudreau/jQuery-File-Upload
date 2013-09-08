@@ -1,5 +1,5 @@
 /*
- * jQuery File Upload Plugin GAE Go Example 2.1
+ * jQuery File Upload Plugin GAE Go Example 3.1.0
  * https://github.com/blueimp/jQuery-File-Upload
  *
  * Copyright 2011, Sebastian Tschan
@@ -30,7 +30,7 @@ import (
 )
 
 const (
-	WEBSITE           = "http://blueimp.github.com/jQuery-File-Upload/"
+	WEBSITE           = "http://blueimp.github.io/jQuery-File-Upload/"
 	MIN_FILE_SIZE     = 1       // bytes
 	MAX_FILE_SIZE     = 5000000 // bytes
 	IMAGE_TYPES       = "image/(gif|p?jpeg|(x-)?png)"
@@ -47,28 +47,28 @@ var (
 type FileInfo struct {
 	Key          appengine.BlobKey `json:"-"`
 	Url          string            `json:"url,omitempty"`
-	ThumbnailUrl string            `json:"thumbnail_url,omitempty"`
+	ThumbnailUrl string            `json:"thumbnailUrl,omitempty"`
 	Name         string            `json:"name"`
 	Type         string            `json:"type"`
 	Size         int64             `json:"size"`
 	Error        string            `json:"error,omitempty"`
-	DeleteUrl    string            `json:"delete_url,omitempty"`
-	DeleteType   string            `json:"delete_type,omitempty"`
+	DeleteUrl    string            `json:"deleteUrl,omitempty"`
+	DeleteType   string            `json:"deleteType,omitempty"`
 }
 
 func (fi *FileInfo) ValidateType() (valid bool) {
 	if acceptFileTypes.MatchString(fi.Type) {
 		return true
 	}
-	fi.Error = "acceptFileTypes"
+	fi.Error = "Filetype not allowed"
 	return false
 }
 
 func (fi *FileInfo) ValidateSize() (valid bool) {
 	if fi.Size < MIN_FILE_SIZE {
-		fi.Error = "minFileSize"
+		fi.Error = "File is too small"
 	} else if fi.Size > MAX_FILE_SIZE {
-		fi.Error = "maxFileSize"
+		fi.Error = "File is too big"
 	} else {
 		return true
 	}
@@ -84,7 +84,7 @@ func (fi *FileInfo) CreateUrls(r *http.Request, c appengine.Context) {
 	uString := u.String()
 	fi.Url = uString + escape(string(fi.Key)) + "/" +
 		escape(string(fi.Name))
-	fi.DeleteUrl = fi.Url
+	fi.DeleteUrl = fi.Url + "?delete=true"
 	fi.DeleteType = "DELETE"
 	if imageTypes.MatchString(fi.Type) {
 		servingUrl, err := image.ServingURL(
@@ -194,19 +194,18 @@ func get(w http.ResponseWriter, r *http.Request) {
 			blobKey := appengine.BlobKey(key)
 			bi, err := blobstore.Stat(appengine.NewContext(r), blobKey)
 			if err == nil {
+				w.Header().Add("X-Content-Type-Options", "nosniff")
+				if !imageTypes.MatchString(bi.ContentType) {
+					w.Header().Add("Content-Type", "application/octet-stream")
+					w.Header().Add(
+						"Content-Disposition",
+						fmt.Sprintf("attachment; filename=\"%s\"", parts[2]),
+					)
+				}
 				w.Header().Add(
 					"Cache-Control",
 					fmt.Sprintf("public,max-age=%d", EXPIRATION_TIME),
 				)
-				if imageTypes.MatchString(bi.ContentType) {
-					w.Header().Add("X-Content-Type-Options", "nosniff")
-				} else {
-					w.Header().Add("Content-Type", "application/octet-stream")
-					w.Header().Add(
-						"Content-Disposition:",
-						fmt.Sprintf("attachment; filename=%s;", parts[2]),
-					)
-				}
 				blobstore.Send(w, blobKey)
 				return
 			}
@@ -216,15 +215,21 @@ func get(w http.ResponseWriter, r *http.Request) {
 }
 
 func post(w http.ResponseWriter, r *http.Request) {
-	b, err := json.Marshal(handleUploads(r))
+    result := make(map[string][]*FileInfo, 1)
+    result["files"] = handleUploads(r)
+	b, err := json.Marshal(result)
 	check(err)
 	if redirect := r.FormValue("redirect"); redirect != "" {
-		http.Redirect(w, r, fmt.Sprintf(
-			redirect,
-			escape(string(b)),
-		), http.StatusFound)
+	    if strings.Contains(redirect, "%s") {
+	        redirect = fmt.Sprintf(
+    			redirect,
+    			escape(string(b)),
+    		)
+	    }
+		http.Redirect(w, r, redirect, http.StatusFound)
 		return
 	}
+	w.Header().Set("Cache-Control", "no-cache")
 	jsonType := "application/json"
 	if strings.Index(r.Header.Get("Accept"), jsonType) != -1 {
 		w.Header().Set("Content-Type", jsonType)
@@ -254,6 +259,10 @@ func handle(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add(
 		"Access-Control-Allow-Methods",
 		"OPTIONS, HEAD, GET, POST, PUT, DELETE",
+	)
+	w.Header().Add(
+		"Access-Control-Allow-Headers",
+		"Content-Type, Content-Range, Content-Disposition",
 	)
 	switch r.Method {
 	case "OPTIONS":

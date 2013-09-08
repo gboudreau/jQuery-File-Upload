@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /*
- * jQuery File Upload Plugin Node.js Example 1.0.2
+ * jQuery File Upload Plugin Node.js Example 2.1.0
  * https://github.com/blueimp/jQuery-File-Upload
  *
  * Copyright 2012, Sebastian Tschan
@@ -10,8 +10,8 @@
  * http://www.opensource.org/licenses/MIT
  */
 
-/*jslint nomen: true, regexp: true, unparam: true */
-/*global require, __dirname, unescape */
+/*jslint nomen: true, regexp: true, unparam: true, stupid: true */
+/*global require, __dirname, unescape, console */
 
 (function (port) {
     'use strict';
@@ -27,13 +27,13 @@
             publicDir: __dirname + '/public',
             uploadDir: __dirname + '/public/files',
             uploadUrl: '/files/',
-            maxPostSize: 500000000, // 500 MB
+            maxPostSize: 11000000000, // 11 GB
             minFileSize: 1,
-            maxFileSize: 100000000, // 100 MB
+            maxFileSize: 10000000000, // 10 GB
             acceptFileTypes: /.+/i,
             // Files not matched by this regular expression force a download dialog,
             // to prevent executing any scripts in the context of the service domain:
-            safeFileTypes: /\.(gif|jpe?g|png)$/i,
+            inlineFileTypes: /\.(gif|jpe?g|png)$/i,
             imageTypes: /\.(gif|jpe?g|png)$/i,
             imageVersions: {
                 'thumbnail': {
@@ -43,7 +43,8 @@
             },
             accessControl: {
                 allowOrigin: '*',
-                allowMethods: 'OPTIONS, HEAD, GET, POST, PUT, DELETE'
+                allowMethods: 'OPTIONS, HEAD, GET, POST, PUT, DELETE',
+                allowHeaders: 'Content-Type, Content-Range, Content-Disposition'
             },
             /* Uncomment and edit this section to provide the service via HTTPS:
             ssl: {
@@ -67,7 +68,7 @@
             this.name = file.name;
             this.size = file.size;
             this.type = file.type;
-            this.delete_type = 'DELETE';
+            this.deleteType = 'DELETE';
         },
         UploadHandler = function (req, res, callback) {
             this.req = req;
@@ -82,6 +83,10 @@
             res.setHeader(
                 'Access-Control-Allow-Methods',
                 options.accessControl.allowMethods
+            );
+            res.setHeader(
+                'Access-Control-Allow-Headers',
+                options.accessControl.allowHeaders
             );
             var handleResult = function (result, redirect) {
                     if (redirect) {
@@ -137,26 +142,24 @@
             }
         };
     fileServer.respond = function (pathname, status, _headers, files, stat, req, res, finish) {
-        if (!options.safeFileTypes.test(files[0])) {
+        // Prevent browsers from MIME-sniffing the content-type:
+        _headers['X-Content-Type-Options'] = 'nosniff';
+        if (!options.inlineFileTypes.test(files[0])) {
             // Force a download dialog for unsafe file extensions:
-            res.setHeader(
-                'Content-Disposition',
-                'attachment; filename="' + utf8encode(path.basename(files[0])) + '"'
-            );
-        } else {
-            // Prevent Internet Explorer from MIME-sniffing the content-type:
-            res.setHeader('X-Content-Type-Options', 'nosniff');
+            _headers['Content-Type'] = 'application/octet-stream';
+            _headers['Content-Disposition'] = 'attachment; filename="' +
+                utf8encode(path.basename(files[0])) + '"';
         }
         nodeStatic.Server.prototype.respond
             .call(this, pathname, status, _headers, files, stat, req, res, finish);
     };
     FileInfo.prototype.validate = function () {
         if (options.minFileSize && options.minFileSize > this.size) {
-            this.error = 'minFileSize';
+            this.error = 'File is too small';
         } else if (options.maxFileSize && options.maxFileSize < this.size) {
-            this.error = 'maxFileSize';
+            this.error = 'File is too big';
         } else if (!options.acceptFileTypes.test(this.name)) {
-            this.error = 'acceptFileTypes';
+            this.error = 'Filetype not allowed';
         }
         return !this.error;
     };
@@ -173,12 +176,12 @@
             var that = this,
                 baseUrl = (options.ssl ? 'https:' : 'http:') +
                     '//' + req.headers.host + options.uploadUrl;
-            this.url = this.delete_url = baseUrl + encodeURIComponent(this.name);
+            this.url = this.deleteUrl = baseUrl + encodeURIComponent(this.name);
             Object.keys(options.imageVersions).forEach(function (version) {
                 if (_existsSync(
                         options.uploadDir + '/' + version + '/' + that.name
                     )) {
-                    that[version + '_url'] = baseUrl + version + '/' +
+                    that[version + 'Url'] = baseUrl + version + '/' +
                         encodeURIComponent(that.name);
                 }
             });
@@ -191,7 +194,7 @@
             list.forEach(function (name) {
                 var stats = fs.statSync(options.uploadDir + '/' + name),
                     fileInfo;
-                if (stats.isFile()) {
+                if (stats.isFile() && name[0] !== '.') {
                     fileInfo = new FileInfo({
                         name: name,
                         size: stats.size
@@ -200,7 +203,7 @@
                     files.push(fileInfo);
                 }
             });
-            handler.callback(files);
+            handler.callback({files: files});
         });
     };
     UploadHandler.prototype.post = function () {
@@ -217,7 +220,7 @@
                     files.forEach(function (fileInfo) {
                         fileInfo.initUrls(handler.req);
                     });
-                    handler.callback(files, redirect);
+                    handler.callback({files: files}, redirect);
                 }
             };
         form.uploadDir = options.tmpDir;
@@ -256,6 +259,8 @@
             tmpFiles.forEach(function (file) {
                 fs.unlink(file);
             });
+        }).on('error', function (e) {
+            console.log(e);
         }).on('progress', function (bytesReceived, bytesExpected) {
             if (bytesReceived > options.maxPostSize) {
                 handler.req.connection.destroy();
@@ -267,15 +272,17 @@
             fileName;
         if (handler.req.url.slice(0, options.uploadUrl.length) === options.uploadUrl) {
             fileName = path.basename(decodeURIComponent(handler.req.url));
-            fs.unlink(options.uploadDir + '/' + fileName, function (ex) {
-                Object.keys(options.imageVersions).forEach(function (version) {
-                    fs.unlink(options.uploadDir + '/' + version + '/' + fileName);
+            if (fileName[0] !== '.') {
+                fs.unlink(options.uploadDir + '/' + fileName, function (ex) {
+                    Object.keys(options.imageVersions).forEach(function (version) {
+                        fs.unlink(options.uploadDir + '/' + version + '/' + fileName);
+                    });
+                    handler.callback({success: !ex});
                 });
-                handler.callback(!ex);
-            });
-        } else {
-            handler.callback(false);
+                return;
+            }
         }
+        handler.callback({success: false});
     };
     if (options.ssl) {
         require('https').createServer(options.ssl, serve).listen(port);
